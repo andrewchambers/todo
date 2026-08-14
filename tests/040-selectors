@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+root=$(add_id "Selector root" --root --switch)
+one_character=${root:0:1}
+shown=$(todo show "$one_character")
+assert_contains "$shown" "Selector root"
+
+child=$(add_id "Selector child" --under "$root" --switch)
+current=$(todo show @)
+assert_contains "$current" "$child Selector child  ← current"
+parent=$(todo show ^)
+assert_contains "$parent" "Selector root"
+
+run_capture todo show "#$root"
+assert_status 2
+assert_contains "$RUN_STDERR" "invalid todo reference"
+
+declare -A seen=()
+collision=""
+for ((index = 1; index <= 17; index += 1)); do
+    candidate=$(add_id "Collision candidate $index" --root)
+    nibble=${candidate:0:1}
+    if [[ -n ${seen[$nibble]+present} ]]; then
+        collision=$nibble
+        break
+    fi
+    seen[$nibble]=$candidate
+done
+[[ -n $collision ]] || fail "could not produce a one-character ID collision"
+
+run_capture todo show "$collision"
+assert_status 2
+assert_contains "$RUN_STDERR" "ambiguous; use more characters"

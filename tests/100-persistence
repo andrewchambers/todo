@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+root=$(add_id "Persistent root" --root --switch)
+child=$(add_id "Persistent child" --under "$root")
+todo switch "$child" >/dev/null
+
+[[ -f $TODO_DB ]] || fail "runner did not create the scratch database"
+
+later=$(python3 "$TODO_PY" show)
+assert_contains "$later" "Persistent root"
+assert_contains "$later" "Persistent child  ← current"
+
+alternate="$TEST_TMP/alternate.db"
+alternate_empty=$(TODO_DB="$alternate" python3 "$TODO_PY")
+assert_contains "$alternate_empty" "No open todos."
+
+original=$(todo show)
+assert_contains "$original" "Persistent child  ← current"
+
+python3 "$TODO_PY" --db "$alternate" add "Alternate root" --root --switch >/dev/null
+alternate_tree=$(python3 "$TODO_PY" --db "$alternate" all)
+assert_contains "$alternate_tree" "Alternate root"
+assert_not_contains "$alternate_tree" "Persistent root"

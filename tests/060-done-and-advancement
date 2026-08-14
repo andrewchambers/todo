@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+root=$(add_id "Delivery" --root --switch)
+first=$(add_id "First step" --under "$root")
+second=$(add_id "Second step" --under "$root")
+todo switch "$first" >/dev/null
+
+after_first=$(todo "done")
+assert_contains "$after_first" "Completed $first 'First step'."
+assert_contains "$after_first" "Second step  ← current"
+
+after_second=$(todo "done")
+assert_contains "$after_second" "Completed $second 'Second step'."
+assert_contains "$after_second" "Delivery  ← current"
+
+after_root=$(todo "done")
+assert_contains "$after_root" "Completed $root 'Delivery'."
+assert_contains "$after_root" "No current todo."
+
+tree=$(todo all)
+assert_contains "$tree" "[x] $root Delivery"
+assert_contains "$tree" "[x] $first First step"
+assert_contains "$tree" "[x] $second Second step"
+
+blocked=$(add_id "Blocked parent" --root --switch)
+add_id "Open child" --under "$blocked" >/dev/null
+run_capture todo "done" "$blocked"
+assert_status 2
+assert_contains "$RUN_STDERR" "open child remains"
+
+todo "done" "$blocked" --tree >/dev/null
+resolved=$(todo all "$blocked")
+assert_contains "$resolved" "[x] $blocked Blocked parent"
+assert_contains "$resolved" "[x]"

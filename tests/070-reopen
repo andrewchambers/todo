@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+root=$(add_id "Resolved root" --root --switch)
+child=$(add_id "Resolved child" --under "$root" --switch)
+todo "done" "$child" >/dev/null
+todo "done" "$root" >/dev/null
+
+before=$(todo all)
+assert_contains "$before" "[x] $root Resolved root"
+assert_contains "$before" "[x] $child Resolved child"
+
+reopened=$(todo reopen "$child")
+assert_contains "$reopened" "Reopened $child 'Resolved child' and 1 resolved ancestor."
+
+after=$(todo all)
+assert_contains "$after" "[ ] $root Resolved root"
+assert_contains "$after" "[ ] $child Resolved child"
+
+todo switch "$child" >/dev/null
+shown=$(todo show)
+assert_contains "$shown" "Resolved child  ← current"

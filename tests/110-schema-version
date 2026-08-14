@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+schema_info=$(python3 - "$TODO_DB" <<'PY'
+import sqlite3
+import sys
+
+connection = sqlite3.connect(sys.argv[1])
+version = connection.execute("PRAGMA user_version").fetchone()[0]
+table_sql = connection.execute(
+    "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'items'"
+).fetchone()[0]
+print(f"version={version}")
+print(table_sql)
+connection.close()
+PY
+)
+assert_contains "$schema_info" "version=1"
+assert_contains "$schema_info" "public_id   TEXT NOT NULL"
+assert_contains "$schema_info" "status IN ('open', 'done')"
+assert_not_contains "$schema_info" "canceled"
+
+unsupported="$TEST_TMP/unsupported.db"
+python3 - "$unsupported" <<'PY'
+import sqlite3
+import sys
+
+connection = sqlite3.connect(sys.argv[1])
+connection.execute("PRAGMA user_version = 7")
+connection.close()
+PY
+
+run_capture python3 "$TODO_PY" --db "$unsupported"
+assert_status 2
+assert_contains "$RUN_STDERR" "database schema version 7 is not supported; expected 1"
+
+unchanged=$(python3 - "$unsupported" <<'PY'
+import sqlite3
+import sys
+
+connection = sqlite3.connect(sys.argv[1])
+print(connection.execute("PRAGMA user_version").fetchone()[0])
+connection.close()
+PY
+)
+assert_eq "7" "$unchanged" "unsupported databases must not be migrated"

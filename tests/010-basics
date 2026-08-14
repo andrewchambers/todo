@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+empty=$(todo)
+assert_contains "$empty" "No open todos."
+
+root=$(add_id "Root task" --root --switch)
+assert_match "$root" '^[0-9a-f]{7,40}$' "add should print a bare hexadecimal ID"
+
+shown=$(todo show)
+assert_contains "$shown" "[ ] $root Root task  ← current"
+
+full=$(todo show "$root" --full-id)
+assert_match "$full" 'Full ID: [0-9a-f]{40}'
+
+help=$(todo --help)
+assert_contains "$help" "{add,show,all,switch,update,move,done,reopen,delete}"
+assert_not_contains "$help" "find"

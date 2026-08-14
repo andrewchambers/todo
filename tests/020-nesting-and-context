@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+printf 'Why the project exists.\nSecond root detail.\n' >"$TEST_TMP/root.md"
+printf 'Implementation notes.\n' >"$TEST_TMP/child.md"
+printf 'Details not on the selected path.\n' >"$TEST_TMP/sibling.md"
+
+root=$(add_id "Project" --root --switch --body-file "$TEST_TMP/root.md")
+child=$(add_id "Selected work" --under "$root" --body-file "$TEST_TMP/child.md")
+sibling=$(add_id "Other work" --under "$root" --body-file "$TEST_TMP/sibling.md")
+grandchild=$(add_id "Deep task" --under "$child" --switch)
+
+shown=$(todo show "$grandchild")
+assert_contains "$shown" "Why the project exists."
+assert_contains "$shown" "Implementation notes."
+assert_contains "$shown" "Deep task  ← current"
+assert_contains "$shown" "$sibling Other work …"
+assert_not_contains "$shown" "Details not on the selected path."
+
+parent=$(todo show ^)
+assert_contains "$parent" "$child Selected work"
+assert_contains "$parent" "Implementation notes."

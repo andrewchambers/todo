@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+root=$(add_id "Keep root" --root --switch)
+child=$(add_id "Delete child" --under "$root" --switch)
+
+run_capture todo delete
+assert_status 2
+assert_contains "$RUN_STDERR" "the following arguments are required: ID"
+survives=$(todo show "$child")
+assert_contains "$survives" "Delete child  ← current"
+
+run_capture todo delete "$root"
+assert_status 2
+assert_contains "$RUN_STDERR" "use --tree"
+
+deleted_child=$(todo delete "$child")
+assert_contains "$deleted_child" "Deleted $child 'Delete child'."
+assert_contains "$deleted_child" "Keep root  ← current"
+
+second=$(add_id "Second child" --under "$root" --switch)
+deleted_tree=$(todo delete "$root" --tree)
+assert_contains "$deleted_tree" "Deleted $root 'Keep root' and 1 descendant."
+assert_contains "$deleted_tree" "No current todo."
+
+empty=$(todo all)
+assert_eq "No matching todos." "$empty"
+run_capture todo show "$second"
+assert_status 2
+assert_contains "$RUN_STDERR" "does not exist"

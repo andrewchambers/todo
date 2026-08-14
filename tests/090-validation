@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+run_capture todo add "" --root
+assert_status 2
+assert_contains "$RUN_STDERR" "a title cannot be empty"
+
+run_capture todo add $'two\nlines' --root
+assert_status 2
+assert_contains "$RUN_STDERR" "a title must be a single line"
+
+root=$(add_id "  Trimmed title  " --root --switch)
+shown=$(todo show)
+assert_contains "$shown" "$root Trimmed title"
+assert_not_contains "$shown" "  Trimmed title  "
+
+run_capture todo update "$root"
+assert_status 2
+assert_contains "$RUN_STDERR" "provide --title, --body-file, or both"
+
+run_capture todo update "$root" --title $'bad\rtitle'
+assert_status 2
+assert_contains "$RUN_STDERR" "a title must be a single line"
+
+printf 'Body from standard input.\n\n' | todo update "$root" --body-file - >/dev/null
+body=$(todo show "$root")
+assert_contains "$body" "Body from standard input."
+
+run_capture todo show "#$root"
+assert_status 2
+assert_contains "$RUN_STDERR" "invalid todo reference"

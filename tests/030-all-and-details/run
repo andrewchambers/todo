@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+root=$(add_id "Documented root" --root --switch --body-file "$TEST_CASE_DIR/root.md")
+child=$(add_id "Finished child" --under "$root" --switch --body-file "$TEST_CASE_DIR/child.md")
+todo "done" "$child" >/dev/null
+
+compact=$(todo all)
+assert_contains "$compact" "[ ] $root Documented root  ← current …"
+assert_contains "$compact" "[x] $child Finished child …"
+assert_not_contains "$compact" "Root body fixture."
+assert_not_contains "$compact" "Child body fixture."
+
+detailed=$(todo all --details)
+assert_contains "$detailed" "Root body fixture."
+assert_contains "$detailed" "Child body fixture."
+assert_not_contains "$detailed" "Documented root …"
+assert_not_contains "$detailed" "Finished child …"
+
+shallow=$(todo all --depth 0)
+assert_contains "$shallow" "1 child"
+assert_not_contains "$shallow" "Finished child"
+
+subtree=$(todo all "$child" --details)
+assert_contains "$subtree" "Finished child"
+assert_not_contains "$subtree" "Documented root"

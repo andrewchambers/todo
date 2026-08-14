@@ -1,0 +1,284 @@
+#!/usr/bin/env bash
+
+set -uo pipefail
+
+tests_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+project_dir=$(cd -- "$tests_dir/.." && pwd -P)
+todo_py="$project_dir/todo.py"
+keep_failed=${KEEP_FAILED:-0}
+verbose=0
+filters=()
+
+usage() {
+    cat <<'EOF'
+Usage: tests/run [--keep-failed] [-v] [PREFIX ...]
+
+Run numbered test files and numbered directories containing a run file.
+Each PREFIX limits the run to test names beginning with that value.
+
+Options:
+  --keep-failed  retain scratch directories for failed tests
+  -v, --verbose  show test output even when a test passes
+  -h, --help     show this help
+
+KEEP_FAILED=1 is equivalent to --keep-failed.
+EOF
+}
+
+while (($#)); do
+    case $1 in
+        --keep-failed)
+            keep_failed=1
+            ;;
+        -v|--verbose)
+            verbose=1
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        --)
+            shift
+            filters+=("$@")
+            break
+            ;;
+        -*)
+            printf 'tests/run: unknown option: %s\n' "$1" >&2
+            usage >&2
+            exit 2
+            ;;
+        *)
+            filters+=("$1")
+            ;;
+    esac
+    shift
+done
+
+if ! command -v python3 >/dev/null 2>&1; then
+    printf 'tests/run: python3 is required\n' >&2
+    exit 2
+fi
+if [[ ! -f $todo_py ]]; then
+    printf 'tests/run: todo.py not found at %s\n' "$todo_py" >&2
+    exit 2
+fi
+
+suite_tmp=$(mktemp -d)
+preserve_suite=0
+cleanup() {
+    if ((preserve_suite == 0)) && [[ -d $suite_tmp ]]; then
+        rm -r -- "$suite_tmp"
+    fi
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+# These helpers are visible because each test is sourced inside its own subshell.
+todo() {
+    python3 "$TODO_PY" "$@"
+}
+
+fail() {
+    printf 'FAIL: %s\n' "$*" >&2
+    return 1
+}
+
+assert_eq() {
+    local expected=$1
+    local actual=$2
+    local label=${3:-values differ}
+    if [[ $actual != "$expected" ]]; then
+        printf 'FAIL: %s\n  expected: %q\n  actual:   %q\n' \
+            "$label" "$expected" "$actual" >&2
+        return 1
+    fi
+}
+
+assert_contains() {
+    local actual=$1
+    local expected=$2
+    local label=${3:-output does not contain expected text}
+    if [[ $actual != *"$expected"* ]]; then
+        printf 'FAIL: %s\n  missing: %q\n  output:  %q\n' \
+            "$label" "$expected" "$actual" >&2
+        return 1
+    fi
+}
+
+assert_not_contains() {
+    local actual=$1
+    local unexpected=$2
+    local label=${3:-output contains unexpected text}
+    if [[ $actual == *"$unexpected"* ]]; then
+        printf 'FAIL: %s\n  found:  %q\n  output: %q\n' \
+            "$label" "$unexpected" "$actual" >&2
+        return 1
+    fi
+}
+
+assert_match() {
+    local actual=$1
+    local pattern=$2
+    local label=${3:-output does not match expected pattern}
+    if [[ ! $actual =~ $pattern ]]; then
+        printf 'FAIL: %s\n  pattern: %s\n  output:  %q\n' \
+            "$label" "$pattern" "$actual" >&2
+        return 1
+    fi
+}
+
+assert_before() {
+    local actual=$1
+    local first=$2
+    local second=$3
+    local first_line second_line
+    first_line=$(printf '%s\n' "$actual" | awk -v text="$first" 'index($0, text) { print NR; exit }')
+    second_line=$(printf '%s\n' "$actual" | awk -v text="$second" 'index($0, text) { print NR; exit }')
+    if [[ -z $first_line || -z $second_line || $first_line -ge $second_line ]]; then
+        printf 'FAIL: expected %q before %q\n  output: %q\n' \
+            "$first" "$second" "$actual" >&2
+        return 1
+    fi
+}
+
+run_capture() {
+    local stdout_path="$TEST_TMP/capture.stdout"
+    local stderr_path="$TEST_TMP/capture.stderr"
+    if "$@" >"$stdout_path" 2>"$stderr_path"; then
+        RUN_STATUS=0
+    else
+        RUN_STATUS=$?
+    fi
+    RUN_STDOUT=$(<"$stdout_path")
+    RUN_STDERR=$(<"$stderr_path")
+}
+
+assert_status() {
+    local expected=$1
+    if ((RUN_STATUS != expected)); then
+        printf 'FAIL: expected exit status %s, got %s\n  stdout: %q\n  stderr: %q\n' \
+            "$expected" "$RUN_STATUS" "$RUN_STDOUT" "$RUN_STDERR" >&2
+        return 1
+    fi
+}
+
+add_id() {
+    local output id
+    if ! output=$(todo add "$@"); then
+        fail "could not add todo: $*"
+        return 1
+    fi
+    id=$(printf '%s\n' "$output" | awk 'NR == 1 { print $2 }')
+    if [[ ! $id =~ ^[0-9a-f]{7,40}$ ]]; then
+        printf 'FAIL: could not extract an ID from %q\n' "$output" >&2
+        return 1
+    fi
+    printf '%s\n' "$id"
+}
+
+matches_filters() {
+    local name=$1
+    local filter
+    if ((${#filters[@]} == 0)); then
+        return 0
+    fi
+    for filter in "${filters[@]}"; do
+        if [[ $name == "$filter"* ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+show_log() {
+    local label=$1
+    local path=$2
+    if [[ -s $path ]]; then
+        printf '  %s:\n' "$label"
+        sed 's/^/    /' "$path"
+    fi
+}
+
+shopt -s nullglob
+entries=("$tests_dir"/[0-9][0-9][0-9]-*)
+selected=0
+passed=0
+failed=0
+
+for entry in "${entries[@]}"; do
+    name=${entry##*/}
+    if ! matches_filters "$name"; then
+        continue
+    fi
+    ((selected += 1))
+
+    if [[ -d $entry ]]; then
+        test_script="$entry/run"
+        test_case_dir=$entry
+    else
+        test_script=$entry
+        test_case_dir=$tests_dir
+    fi
+
+    case_tmp="$suite_tmp/$name"
+    mkdir -p -- "$case_tmp/work" "$case_tmp/xdg"
+    stdout_log="$case_tmp/test.stdout"
+    stderr_log="$case_tmp/test.stderr"
+
+    printf '%s ... ' "$name"
+    if [[ ! -f $test_script ]]; then
+        printf 'not ok\n'
+        printf '  missing test script: %s\n' "$test_script"
+        ((failed += 1))
+        continue
+    fi
+
+    if (
+        set -euo pipefail
+        export TODO_PY="$todo_py"
+        export TODO_DB="$case_tmp/todo.db"
+        export TEST_TMP="$case_tmp"
+        export TEST_CASE_DIR="$test_case_dir"
+        export NO_COLOR=1
+        export TERM=dumb
+        export PYTHONUTF8=1
+        export LC_ALL=C
+        export XDG_DATA_HOME="$case_tmp/xdg"
+        cd -- "$case_tmp/work"
+        todo >/dev/null
+        # shellcheck disable=SC1090
+        source "$test_script"
+    ) >"$stdout_log" 2>"$stderr_log"; then
+        printf 'ok\n'
+        ((passed += 1))
+        if ((verbose)); then
+            show_log stdout "$stdout_log"
+            show_log stderr "$stderr_log"
+        fi
+        if [[ $keep_failed == 1 || $keep_failed == true || $keep_failed == yes ]]; then
+            rm -r -- "$case_tmp"
+        fi
+    else
+        status=$?
+        printf 'not ok (exit %s)\n' "$status"
+        show_log stdout "$stdout_log"
+        show_log stderr "$stderr_log"
+        ((failed += 1))
+        if [[ $keep_failed == 1 || $keep_failed == true || $keep_failed == yes ]]; then
+            preserve_suite=1
+            printf '  scratch: %s\n' "$case_tmp"
+        fi
+    fi
+done
+
+if ((selected == 0)); then
+    printf 'tests/run: no tests matched\n' >&2
+    exit 2
+fi
+
+printf '\n%s passed, %s failed\n' "$passed" "$failed"
+if ((preserve_suite)); then
+    printf 'Failed test scratch data retained under %s\n' "$suite_tmp"
+fi
+((failed == 0))

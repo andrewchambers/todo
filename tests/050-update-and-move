@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+alpha=$(add_id "Alpha root" --root)
+beta=$(add_id "Beta root" --root)
+child=$(add_id "Movable child" --under "$alpha")
+grandchild=$(add_id "Nested grandchild" --under "$child")
+
+todo move "$beta" --before "$alpha" >/dev/null
+ordered=$(todo all)
+assert_before "$ordered" "Beta root" "Alpha root"
+
+printf 'Updated body text.\n' >"$TEST_TMP/body.md"
+todo update "$child" --title "Renamed child" --body-file "$TEST_TMP/body.md" >/dev/null
+todo move "$child" --under "$beta" >/dev/null
+
+moved=$(todo all --details)
+assert_before "$moved" "Beta root" "Renamed child"
+assert_before "$moved" "Renamed child" "Nested grandchild"
+assert_contains "$moved" "Updated body text."
+
+run_capture todo move "$beta" --under "$grandchild"
+assert_status 2
+assert_contains "$RUN_STDERR" "cannot move a todo beneath one of its descendants"
