@@ -5,9 +5,14 @@ set -euo pipefail
 empty=$(todo)
 assert_contains "$empty" "No open todos."
 
-root=$(add_id "Root task" --root --switch)
+printf 'Hidden root details.\n' >"$TEST_TMP/root.md"
+root=$(add_id "Root task" --root --body-file "$TEST_TMP/root.md")
 assert_match "$root" '^[0-9a-f]{7,40}$' "add should print a bare hexadecimal ID"
 
+roots=$(todo)
+assert_contains "$roots" "[ ] $root Root task …"
+
+todo switch "$root" >/dev/null
 shown=$(todo show)
 assert_contains "$shown" "[ ] $root Root task  ← current"
 

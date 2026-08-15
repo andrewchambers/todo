@@ -613,7 +613,10 @@ def display_default(connection: sqlite3.Connection) -> None:
     print()
     print("Open roots:")
     for root in roots:
-        print(f"  {format_item_line(connection, root)}")
+        line = format_item_line(connection, root)
+        if root["body"]:
+            line += " …"
+        print(f"  {line}")
     print()
     print("Switch to one with: todo switch ID")
 
